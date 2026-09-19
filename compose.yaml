@@ -3,8 +3,7 @@ services:
     build: .
     ports:
       - "127.0.0.1:5173:5173"
-    volumes:
-      - consultation-data:/app/data
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
     restart: unless-stopped
-volumes:
-  consultation-data:
