@@ -1,0 +1,10 @@
+/data/
+/work/
+*.sqlite
+*.sqlite-*
+*.db
+.env
+.env.*
+node_modules/
+*.log
+.DS_Store

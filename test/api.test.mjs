@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {readFileSync} from 'node:fs';
+import {api} from '../server/worker.js';
+const sql=new DatabaseSync(':memory:');sql.exec(readFileSync('drizzle/0000_consultations.sql','utf8'));
+const DB={prepare(query){const s=sql.prepare(query);let v=[];return{bind(...values){v=values;return this;},async first(){return s.get(...v)||null},async run(){return s.run(...v)}}}};
+let cookie='';async function call(input,campaign='test',origin='http://localhost'){const r=await api(new Request('http://localhost/api/campaign/'+campaign,{method:'POST',headers:{'Content-Type':'application/json',cookie,origin},body:JSON.stringify(input)}),{DB},campaign);if(r.headers.has('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return{status:r.status,data:await r.json()};}
+assert.equal((await call({action:'complete'})).status,401);
+let r=await call({action:'init',attribution:{utm_source:'qa'}});assert.equal(r.data.step,0);
+assert.equal((await call({action:'answer',question:0,value:'1억 원 이상'})).status,400);
+assert.equal((await call({action:'start'})).data.step,1);
+assert.equal((await call({action:'answer',question:0,value:'bad'})).status,400);
+assert.equal((await call({action:'answer',question:0,value:'1억 원 이상'})).data.step,2);
+assert.equal((await call({action:'init'})).data.answers[0],'1억 원 이상');
+assert.equal((await call({action:'answer',question:1,value:'300만 원 이상'})).data.step,3);
+assert.equal((await call({action:'complete',name:'테스트',phone:'01000000000',consent:false})).status,400);
+assert.equal((await call({action:'complete',name:'테스트',phone:'bad',consent:true})).status,400);
+assert.equal((await call({action:'complete',name:'테스트',phone:'01000000000',consent:true})).data.completed,true);
+const record=sql.prepare('SELECT * FROM visits').get();assert.equal(record.completed,1);assert.ok(record.consent_at);assert.equal(record.consent_version,'hokyung-v1-1year');
+assert.equal((await call({action:'complete',name:'중복',phone:'01011111111',consent:true})).data.reference,record.id.slice(0,8).toUpperCase());
+assert.equal(sql.prepare('SELECT name FROM visits').get().name,'테스트');assert.equal(sql.prepare('SELECT count(*) AS n FROM visits').get().n,1);
+assert.equal((await call({action:'init'})).data.completed,true);
+assert.equal((await call({action:'init'},'other')).data.completed,false);
+assert.equal((await call({action:'start'},'other','https://evil.example')).status,403);
+sql.prepare('UPDATE visits SET created_at=? WHERE campaign=?').run('2020-01-01T00:00:00.000Z','test');await call({action:'init'},'other');assert.equal(sql.prepare('SELECT count(*) AS n FROM visits WHERE campaign=?').get('test').n,0);
+const unavailable=await api(new Request('http://localhost/api/campaign/test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"action":"init"}'}),{},'test');assert.equal(unavailable.status,503);
+console.log('PASS: visit creation, attribution, step order, answers, reload recovery, consent/phone validation, completion, idempotency, campaign isolation, cross-origin rejection, retention purge, storage failure.');
